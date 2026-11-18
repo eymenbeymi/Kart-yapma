@@ -1,0 +1,841 @@
+name: Studyo APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+      - name: Proje dosyalarini olustur
+        run: |
+          mkdir -p app/src/main/java/com/eymen/studyo app/src/main/res/drawable
+
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = 'Studyo'
+          include ':app'
+          EOF
+
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.5.2' apply false
+              id 'org.jetbrains.kotlin.android' version '1.9.24' apply false
+          }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          android.useAndroidX=true
+          org.gradle.jvmargs=-Xmx2g
+          EOF
+
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+              id 'org.jetbrains.kotlin.android'
+          }
+          android {
+              namespace 'com.eymen.studyo'
+              compileSdk 34
+              defaultConfig {
+                  applicationId 'com.eymen.studyo'
+                  minSdk 29
+                  targetSdk 34
+                  versionCode 1
+                  versionName '1.0'
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = '17' }
+          }
+          dependencies {
+              implementation 'androidx.core:core-ktx:1.13.1'
+              implementation 'androidx.activity:activity-ktx:1.9.1'
+          }
+          EOF
+
+          cat > app/src/main/res/drawable/ic_launcher.xml <<'EOF'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path android:fillColor="#0F1115" android:pathData="M0,0h108v108h-108z" />
+              <path android:fillColor="#7C4DFF" android:pathData="M54,54m-36,0a36,36 0,1 1,72 0a36,36 0,1 1,-72 0" />
+              <path android:fillColor="#FFFFFF" android:pathData="M54,26l7,21 21,7 -21,7 -7,21 -7,-21 -21,-7 21,-7z" />
+          </vector>
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <application
+                  android:label="Resim Stüdyo"
+                  android:icon="@drawable/ic_launcher"
+                  android:largeHeap="true"
+                  android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/eymen/studyo/MainActivity.kt <<'EOF'
+          package com.eymen.studyo
+
+          import android.app.AlertDialog
+          import android.content.ContentValues
+          import android.content.Intent
+          import android.content.SharedPreferences
+          import android.graphics.Bitmap
+          import android.graphics.BitmapFactory
+          import android.graphics.Canvas
+          import android.graphics.Color
+          import android.graphics.ColorMatrix
+          import android.graphics.ColorMatrixColorFilter
+          import android.graphics.CornerPathEffect
+          import android.graphics.LinearGradient
+          import android.graphics.Matrix
+          import android.graphics.Paint
+          import android.graphics.Path
+          import android.graphics.RectF
+          import android.graphics.Shader
+          import android.graphics.Typeface
+          import android.graphics.drawable.GradientDrawable
+          import android.net.Uri
+          import android.os.Bundle
+          import android.provider.MediaStore
+          import android.text.InputType
+          import android.view.Gravity
+          import android.view.View
+          import android.view.ViewGroup
+          import android.widget.EditText
+          import android.widget.FrameLayout
+          import android.widget.HorizontalScrollView
+          import android.widget.ImageView
+          import android.widget.LinearLayout
+          import android.widget.ProgressBar
+          import android.widget.ScrollView
+          import android.widget.Switch
+          import android.widget.TextView
+          import android.widget.Toast
+          import androidx.activity.ComponentActivity
+          import org.json.JSONArray
+          import org.json.JSONObject
+          import java.net.HttpURLConnection
+          import java.net.URL
+
+          class MainActivity : ComponentActivity() {
+
+              private lateinit var prefs: SharedPreferences
+              private lateinit var img: ImageView
+              private lateinit var status: TextView
+              private lateinit var bar: ProgressBar
+              private lateinit var promptBox: EditText
+              private lateinit var optionsBox: LinearLayout
+              private var nameEt: EditText? = null
+              private var ovrEt: EditText? = null
+              private var posEt: EditText? = null
+              private var countryEt: EditText? = null
+
+              private var cat = 0
+              private var sizeIdx = 0
+              private var poseIdx = 0
+              private var kitIdx = 0
+              private var bgIdx = 1
+              private var cardIdx = 1
+              private var filterIdx = 0
+              private var busy = false
+              private var lastRaw: Bitmap? = null
+              private var shown: Bitmap? = null
+              private var lastCard = false
+              private var lastFit = false
+
+              private val cats = listOf(
+                  "SERBEST", "FUTBOLCU KARTI", "BRAWL", "MINECRAFT", "GTA", "VALORANT", "FREE FIRE",
+                  "ROBLOX", "PİKSEL", "ANİME", "LOGO", "ÇIKARTMA", "FANTAZİ", "GERÇEKÇİ"
+              )
+              private val styles = listOf(
+                  "",
+                  "",
+                  "stylized 3D cartoon mobile game brawler character, chunky proportions, thick bold outlines, vibrant saturated colors, glossy shading, splash art, ",
+                  "voxel blocky sandbox game style, cubic blocks, low-poly cubes, bright colors, ",
+                  "stylized loading screen cover illustration, bold comic poster style, saturated warm sunset colors, urban crime drama mood, ",
+                  "tactical hero shooter agent splash art, sleek sci-fi outfit, dynamic pose, neon accents, ",
+                  "battle royale mobile game character, stylized 3D, survival outfit, dynamic pose, ",
+                  "blocky toy-like plastic character, simple geometric shapes, bright colors, ",
+                  "pixel art, 16-bit sprite style, crisp pixels, limited palette, ",
+                  "anime style illustration, clean line art, vibrant cel shading, ",
+                  "esports mascot logo emblem, bold vector style, clean white background, ",
+                  "glossy game emote sticker, chibi expression, thick white outline, white background, ",
+                  "epic fantasy RPG character art, detailed armor, dramatic lighting, ",
+                  "ultra realistic photograph, 85mm lens, natural light, highly detailed, "
+              )
+              private val sizeNames = listOf("Kare 1:1", "Dikey 3:4", "Hikaye 9:16", "Yatay 16:9")
+              private val poseNames = listOf(
+                  "Sevinç", "Diz üstü kayma", "Havada dönüş", "Kafa vuruşu", "Havada vole",
+                  "Penaltı", "Kupa kaldır", "Kollar bağlı", "Dribling", "Forma öp"
+              )
+              private val poseText = listOf(
+                  "celebrating a goal with both arms wide open and mouth open shouting with joy",
+                  "doing a knee slide on the grass, fists clenched, shouting",
+                  "jumping and spinning in mid-air, celebration pose",
+                  "powerful header in mid-air, eyes on the ball",
+                  "acrobatic volley kick in mid-air",
+                  "taking a penalty kick, powerful strike",
+                  "lifting a golden trophy above the head in victory",
+                  "standing with arms crossed, confident look",
+                  "dribbling a football at speed",
+                  "kissing the badge on the jersey, emotional celebration"
+              )
+              private val kitNames = listOf("Kırmızı", "Mavi", "Sarı", "Beyaz", "Siyah", "Turuncu", "Mor", "Lacivert")
+              private val kitEn = listOf("red", "blue", "yellow", "white", "black", "orange", "purple", "navy blue")
+              private val bgNames = listOf("Şeffaf", "Stadyum", "Gece ışıkları", "Düz renk")
+              private val bgText = listOf(
+                  "isolated on a flat pure bright green (#00FF00) chroma key background, evenly lit, no green on the player",
+                  "in a packed football stadium at golden hour, blurred crowd",
+                  "under bright floodlights at night in a stadium, dramatic rim light",
+                  "on a plain solid dark studio background"
+              )
+              private val cardNames = listOf("Kartsız", "Altın", "Efsane", "Mavi", "Siyah")
+              private val filterNames = listOf("Normal", "Canlı", "Siyah-Beyaz", "Sıcak", "Soğuk", "Retro")
+
+              private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
+
+              private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+              private fun bg(color: Int, r: Int): GradientDrawable = GradientDrawable().apply {
+                  setColor(color)
+                  cornerRadius = dp(r).toFloat()
+              }
+
+              private fun lp(w: Int, h: Int, l: Int = 0, t: Int = 0, r: Int = 0, b: Int = 0) =
+                  LinearLayout.LayoutParams(w, h).apply { setMargins(dp(l), dp(t), dp(r), dp(b)) }
+
+              private fun chip(t: String, f: () -> Unit): TextView = TextView(this).apply {
+                  text = t
+                  textSize = 13f
+                  setTextColor(Color.WHITE)
+                  gravity = Gravity.CENTER
+                  setPadding(dp(14), dp(8), dp(14), dp(8))
+                  background = bg(0x33FFFFFF, 18)
+                  setOnClickListener { f() }
+              }
+
+              private fun bigBtn(t: String, color: Int, f: () -> Unit): TextView = TextView(this).apply {
+                  text = t
+                  textSize = 15f
+                  setTypeface(null, Typeface.BOLD)
+                  setTextColor(Color.WHITE)
+                  gravity = Gravity.CENTER
+                  setPadding(dp(8), dp(12), dp(8), dp(12))
+                  background = bg(color, 14)
+                  setOnClickListener { f() }
+              }
+
+              private fun label(t: String): TextView = TextView(this).apply {
+                  text = t
+                  textSize = 12f
+                  setTextColor(0xAAFFFFFF.toInt())
+                  setPadding(dp(4), dp(8), 0, dp(2))
+              }
+
+              private fun field(h: String, def: String, number: Boolean): EditText = EditText(this).apply {
+                  this.hint = h
+                  setText(def)
+                  setTextColor(Color.WHITE)
+                  setHintTextColor(0x88FFFFFF.toInt())
+                  textSize = 14f
+                  isSingleLine = true
+                  if (number) inputType = InputType.TYPE_CLASS_NUMBER
+                  background = bg(0x33FFFFFF, 12)
+                  setPadding(dp(12), dp(8), dp(12), dp(8))
+              }
+
+              private fun chipRow(items: List<String>, selected: Int, onPick: (Int) -> Unit): HorizontalScrollView {
+                  val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                  val views = ArrayList<TextView>()
+                  fun paint(sel: Int) {
+                      for (i in views.indices) {
+                          views[i].background = bg(if (i == sel) 0xFF7C4DFF.toInt() else 0x33FFFFFF, 18)
+                      }
+                  }
+                  for (i in items.indices) {
+                      val t = TextView(this).apply {
+                          text = items[i]
+                          textSize = 13f
+                          setTextColor(Color.WHITE)
+                          setPadding(dp(14), dp(8), dp(14), dp(8))
+                          setOnClickListener {
+                              paint(i)
+                              onPick(i)
+                          }
+                      }
+                      views.add(t)
+                      row.addView(t, lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, 3, 3, 3, 3))
+                  }
+                  paint(selected)
+                  return HorizontalScrollView(this).apply {
+                      isHorizontalScrollBarEnabled = false
+                      addView(row)
+                  }
+              }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  prefs = getSharedPreferences("studyo", MODE_PRIVATE)
+                  val match = ViewGroup.LayoutParams.MATCH_PARENT
+                  val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
+
+                  val col = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(dp(12), dp(40), dp(12), dp(24))
+                  }
+                  val scroll = ScrollView(this).apply {
+                      setBackgroundColor(0xFF0F1115.toInt())
+                      addView(col)
+                  }
+
+                  val title = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                  }
+                  val tt = TextView(this).apply {
+                      text = "Resim Stüdyo"
+                      textSize = 22f
+                      setTextColor(Color.WHITE)
+                      setTypeface(null, Typeface.BOLD)
+                  }
+                  title.addView(tt, LinearLayout.LayoutParams(0, wrap, 1f))
+                  title.addView(chip("⚙ Ayar") { showSettings() })
+                  col.addView(title)
+
+                  val frame = FrameLayout(this).apply { background = bg(0xFF1B1F27.toInt(), 16) }
+                  img = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
+                  frame.addView(img, FrameLayout.LayoutParams(match, match))
+                  bar = ProgressBar(this).apply { visibility = View.GONE }
+                  frame.addView(bar, FrameLayout.LayoutParams(wrap, wrap, Gravity.CENTER))
+                  status = TextView(this).apply {
+                      text = "Bir şey yaz, kategori seç, ÜRET'e bas"
+                      setTextColor(0xCCFFFFFF.toInt())
+                      textSize = 13f
+                      gravity = Gravity.CENTER
+                      setPadding(dp(12), dp(8), dp(12), dp(8))
+                  }
+                  frame.addView(status, FrameLayout.LayoutParams(match, wrap, Gravity.BOTTOM))
+                  val fh = (resources.displayMetrics.heightPixels * 0.5f).toInt()
+                  col.addView(frame, lp(match, fh, 0, 10, 0, 8))
+
+                  val act = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                  act.addView(bigBtn("ÜRET", 0xFF7C4DFF.toInt()) { generate() }, lp(0, wrap, 0, 0, 4, 0).apply { weight = 1.4f })
+                  act.addView(bigBtn("KAYDET", 0xFF2E7D32.toInt()) { save(false) }, lp(0, wrap, 4, 0, 4, 0).apply { weight = 1f })
+                  act.addView(bigBtn("PAYLAŞ", 0xFF1565C0.toInt()) { save(true) }, lp(0, wrap, 4, 0, 0, 0).apply { weight = 1f })
+                  col.addView(act)
+
+                  col.addView(label("Filtre"))
+                  col.addView(chipRow(filterNames, 0) {
+                      filterIdx = it
+                      reRender()
+                  })
+
+                  promptBox = EditText(this).apply {
+                      hint = "Ne çizelim? Türkçe yazabilirsin"
+                      setHintTextColor(0x88FFFFFF.toInt())
+                      setTextColor(Color.WHITE)
+                      minLines = 2
+                      background = bg(0x33FFFFFF, 12)
+                      setPadding(dp(12), dp(10), dp(12), dp(10))
+                  }
+                  col.addView(promptBox, lp(match, wrap, 0, 10, 0, 4))
+
+                  col.addView(label("Kategori"))
+                  col.addView(chipRow(cats, 0) {
+                      cat = it
+                      rebuildOptions()
+                  })
+
+                  optionsBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                  col.addView(optionsBox)
+
+                  col.addView(label("Boyut (kartta 3:4 sabit)"))
+                  col.addView(chipRow(sizeNames, 0) { sizeIdx = it })
+
+                  setContentView(scroll)
+                  rebuildOptions()
+              }
+
+              private fun rebuildOptions() {
+                  optionsBox.removeAllViews()
+                  nameEt = null
+                  ovrEt = null
+                  posEt = null
+                  countryEt = null
+                  if (cat != 1) return
+                  optionsBox.addView(label("Poz"))
+                  optionsBox.addView(chipRow(poseNames, poseIdx) { poseIdx = it })
+                  optionsBox.addView(label("Forma rengi (şeffafta yeşil seçme)"))
+                  optionsBox.addView(chipRow(kitNames, kitIdx) { kitIdx = it })
+                  optionsBox.addView(label("Arka plan"))
+                  optionsBox.addView(chipRow(bgNames, bgIdx) { bgIdx = it })
+                  optionsBox.addView(label("Kart"))
+                  optionsBox.addView(chipRow(cardNames, cardIdx) { cardIdx = it })
+                  optionsBox.addView(label("Kart yazıları"))
+                  val n = field("İsim", "OYUNCU", false)
+                  val o = field("OVR", "90", true)
+                  val p = field("Mevki", "SF", false)
+                  val c = field("Ülke", "TR", false)
+                  nameEt = n
+                  ovrEt = o
+                  posEt = p
+                  countryEt = c
+                  val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                  row.addView(n, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, 4, 0).apply { weight = 2f })
+                  row.addView(o, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 4, 0, 4, 0).apply { weight = 1f })
+                  row.addView(p, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 4, 0, 4, 0).apply { weight = 1f })
+                  row.addView(c, lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 4, 0, 0, 0).apply { weight = 1f })
+                  optionsBox.addView(row)
+                  optionsBox.addView(
+                      chip("Kartı güncelle (yazıları uygula)") { reRender() },
+                      lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, 0, 8, 0, 4)
+                  )
+              }
+
+              private fun showSettings() {
+                  val box = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(dp(20), dp(10), dp(20), 0)
+                  }
+                  val info = TextView(this).apply {
+                      text = "API anahtarını enter.pollinations.ai/keys adresinden al (secret key, sk_ ile başlar). Anahtar sadece bu telefonda saklanır."
+                      textSize = 12f
+                      setTextIsSelectable(true)
+                  }
+                  val keyEt = EditText(this).apply {
+                      hint = "API anahtarı (sk_...)"
+                      setText(prefs.getString("key", ""))
+                      isSingleLine = true
+                  }
+                  val modelEt = EditText(this).apply {
+                      hint = "Model (boş = varsayılan)"
+                      setText(prefs.getString("model", ""))
+                      isSingleLine = true
+                  }
+                  val trSw = Switch(this).apply {
+                      text = "Türkçe yazıyı İngilizceye çevir"
+                      isChecked = prefs.getBoolean("tr", true)
+                  }
+                  box.addView(info)
+                  box.addView(keyEt)
+                  box.addView(modelEt)
+                  box.addView(trSw)
+                  AlertDialog.Builder(this)
+                      .setTitle("Ayarlar")
+                      .setView(box)
+                      .setPositiveButton("Kaydet") { _, _ ->
+                          prefs.edit()
+                              .putString("key", keyEt.text.toString().trim())
+                              .putString("model", modelEt.text.toString().trim())
+                              .putBoolean("tr", trSw.isChecked)
+                              .apply()
+                          toast("Kaydedildi")
+                      }
+                      .setNegativeButton("İptal", null)
+                      .show()
+              }
+
+              private fun buildPrompt(c: Int, u: String, pose: Int, kit: Int, bgI: Int): String {
+                  if (c == 1) {
+                      return "dynamic centered shot of an original fictional professional football player, athletic build, " +
+                          poseText[pose] + ", wearing a " + kitEn[kit] +
+                          " football kit with no logos and no text, " + bgText[bgI] +
+                          ", highly detailed, sharp focus, dramatic lighting, premium game card art" +
+                          (if (u.isNotEmpty()) ", " + u else "")
+                  }
+                  return styles[c] + u
+              }
+
+              private fun generate() {
+                  if (busy) return
+                  val key = (prefs.getString("key", "") ?: "").trim()
+                  if (key.isEmpty()) {
+                      toast("Önce ⚙ Ayar'a API anahtarını gir")
+                      showSettings()
+                      return
+                  }
+                  val user = promptBox.text.toString().trim()
+                  val c = cat
+                  if (c != 1 && user.isEmpty()) {
+                      toast("Önce bir şey yaz")
+                      return
+                  }
+                  val model = (prefs.getString("model", "") ?: "").trim()
+                  val tr = prefs.getBoolean("tr", true)
+                  val isCard = c == 1
+                  val bgI = bgIdx
+                  val pose = poseIdx
+                  val kit = kitIdx
+                  var w = 1024
+                  var h = 1024
+                  if (isCard) {
+                      w = 768
+                      h = 1024
+                  } else if (sizeIdx == 1) {
+                      w = 768
+                      h = 1024
+                  } else if (sizeIdx == 2) {
+                      w = 576
+                      h = 1024
+                  } else if (sizeIdx == 3) {
+                      w = 1024
+                      h = 576
+                  }
+                  val seed = (Math.random() * 2000000000.0).toInt()
+                  busy = true
+                  bar.visibility = View.VISIBLE
+                  status.text = "Üretiliyor... (15-60 sn)"
+                  val card = isCard && cardIdx != 0
+                  Thread {
+                      try {
+                          var text = user
+                          if (tr && text.isNotEmpty()) text = translate(text, key)
+                          val prompt = buildPrompt(c, text, pose, kit, bgI)
+                          val bmp = fetch(prompt, w, h, seed, model, key)
+                          val fit = isCard && bgI == 0
+                          val raw = if (fit) chroma(bmp) else bmp
+                          lastRaw = raw
+                          lastCard = card
+                          lastFit = fit
+                          runOnUiThread {
+                              busy = false
+                              bar.visibility = View.GONE
+                              status.text = "Hazır"
+                              reRender()
+                          }
+                      } catch (e: Exception) {
+                          runOnUiThread {
+                              busy = false
+                              bar.visibility = View.GONE
+                              status.text = "Hata: " + e.message
+                          }
+                      }
+                  }.start()
+              }
+
+              private fun translate(text: String, key: String): String {
+                  try {
+                      val msgs = JSONArray()
+                      msgs.put(
+                          JSONObject().put("role", "system").put(
+                              "content",
+                              "Translate the user's text into English for an image generation prompt. Reply with the translation only, no quotes."
+                          )
+                      )
+                      msgs.put(JSONObject().put("role", "user").put("content", text))
+                      val body = JSONObject().put("model", "openai/gpt-5.4-nano").put("messages", msgs)
+                      val c = URL("https://gen.pollinations.ai/v1/chat/completions").openConnection() as HttpURLConnection
+                      c.requestMethod = "POST"
+                      c.connectTimeout = 20000
+                      c.readTimeout = 60000
+                      c.doOutput = true
+                      c.setRequestProperty("Content-Type", "application/json")
+                      c.setRequestProperty("Authorization", "Bearer " + key)
+                      c.outputStream.use { it.write(body.toString().toByteArray()) }
+                      if (c.responseCode != 200) return text
+                      val resp = c.inputStream.bufferedReader().readText()
+                      val out = JSONObject(resp).getJSONArray("choices").getJSONObject(0)
+                          .getJSONObject("message").getString("content")
+                      return if (out.isNotBlank()) out.trim() else text
+                  } catch (e: Exception) {
+                      return text
+                  }
+              }
+
+              private fun fetch(prompt: String, w: Int, h: Int, seed: Int, model: String, key: String): Bitmap {
+                  var u = "https://gen.pollinations.ai/image/" + Uri.encode(prompt.take(1400)) +
+                      "?width=" + w + "&height=" + h + "&seed=" + seed
+                  if (model.isNotEmpty()) u += "&model=" + Uri.encode(model)
+                  val c = URL(u).openConnection() as HttpURLConnection
+                  c.connectTimeout = 30000
+                  c.readTimeout = 240000
+                  c.setRequestProperty("Authorization", "Bearer " + key)
+                  val code = c.responseCode
+                  if (code != 200) {
+                      val body = try { c.errorStream?.bufferedReader()?.readText() ?: "" } catch (e: Exception) { "" }
+                      val why = when (code) {
+                          401 -> "Anahtar yanlış ya da yok"
+                          402 -> "Pollen kredisi bitti"
+                          429 -> "Çok hızlı, biraz bekle"
+                          else -> ""
+                      }
+                      throw Exception("HTTP " + code + " " + why + " " + body.take(160))
+                  }
+                  return BitmapFactory.decodeStream(c.inputStream) ?: throw Exception("Resim okunamadı")
+              }
+
+              private fun chroma(src: Bitmap): Bitmap {
+                  val w = src.width
+                  val h = src.height
+                  val px = IntArray(w * h)
+                  src.getPixels(px, 0, w, 0, 0, w, h)
+                  for (i in px.indices) {
+                      val c = px[i]
+                      val r = (c shr 16) and 255
+                      val g = (c shr 8) and 255
+                      val b = c and 255
+                      val gx = g - Math.max(r, b)
+                      if (gx > 70) {
+                          px[i] = 0
+                      } else if (gx > 25) {
+                          val a = 255 * (70 - gx) / 45
+                          val ng = Math.min(g, Math.max(r, b) + 10)
+                          px[i] = (a shl 24) or (r shl 16) or (ng shl 8) or b
+                      } else if (gx > 8) {
+                          val ng = g - gx / 2
+                          px[i] = (255 shl 24) or (r shl 16) or (ng shl 8) or b
+                      }
+                  }
+                  val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                  out.setPixels(px, 0, w, 0, 0, w, h)
+                  return out
+              }
+
+              private fun reRender() {
+                  val raw = lastRaw ?: return
+                  var b: Bitmap = raw
+                  if (lastCard) {
+                      val nm = (nameEt?.text?.toString() ?: "OYUNCU").trim().ifEmpty { "OYUNCU" }
+                      val ov = (ovrEt?.text?.toString() ?: "90").toIntOrNull()?.coerceIn(1, 99) ?: 90
+                      val ps = (posEt?.text?.toString() ?: "SF").trim()
+                      val ct = (countryEt?.text?.toString() ?: "").trim()
+                      b = makeCard(raw, cardIdx, nm, ov, ps, ct, lastFit)
+                  }
+                  if (filterIdx != 0) b = applyFilter(b, filterIdx)
+                  shown = b
+                  img.setImageBitmap(b)
+              }
+
+              private fun applyFilter(src: Bitmap, f: Int): Bitmap {
+                  val cm = ColorMatrix()
+                  when (f) {
+                      1 -> {
+                          cm.setSaturation(1.45f)
+                          cm.postConcat(ColorMatrix(floatArrayOf(
+                              1.1f, 0f, 0f, 0f, -10f,
+                              0f, 1.1f, 0f, 0f, -10f,
+                              0f, 0f, 1.1f, 0f, -10f,
+                              0f, 0f, 0f, 1f, 0f
+                          )))
+                      }
+                      2 -> cm.setSaturation(0f)
+                      3 -> cm.postConcat(ColorMatrix(floatArrayOf(
+                          1.12f, 0f, 0f, 0f, 8f,
+                          0f, 1.02f, 0f, 0f, 0f,
+                          0f, 0f, 0.88f, 0f, -6f,
+                          0f, 0f, 0f, 1f, 0f
+                      )))
+                      4 -> cm.postConcat(ColorMatrix(floatArrayOf(
+                          0.9f, 0f, 0f, 0f, -4f,
+                          0f, 1f, 0f, 0f, 0f,
+                          0f, 0f, 1.15f, 0f, 8f,
+                          0f, 0f, 0f, 1f, 0f
+                      )))
+                      5 -> {
+                          cm.setSaturation(0.6f)
+                          cm.postConcat(ColorMatrix(floatArrayOf(
+                              1.08f, 0f, 0f, 0f, 12f,
+                              0f, 1f, 0f, 0f, 6f,
+                              0f, 0f, 0.85f, 0f, 0f,
+                              0f, 0f, 0f, 1f, 0f
+                          )))
+                      }
+                  }
+                  val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+                  val p = Paint(Paint.FILTER_BITMAP_FLAG)
+                  p.colorFilter = ColorMatrixColorFilter(cm)
+                  Canvas(out).drawBitmap(src, 0f, 0f, p)
+                  return out
+              }
+
+              private fun drawFit(cv: Canvas, s: String, x: Float, y: Float, size: Float, maxW: Float, p: Paint) {
+                  p.textSize = size
+                  val tw = p.measureText(s)
+                  if (tw > maxW) p.textSize = size * maxW / tw
+                  cv.drawText(s, x, y, p)
+              }
+
+              private fun makeCard(
+                  player: Bitmap, type: Int, name: String, ovr: Int,
+                  pos: String, country: String, fit: Boolean
+              ): Bitmap {
+                  val bw = 1000
+                  val bh = 1500
+                  val w = bw.toFloat()
+                  val h = bh.toFloat()
+                  val out = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+                  val cv = Canvas(out)
+
+                  val top: Int
+                  val mid: Int
+                  val bot: Int
+                  val txt: Int
+                  when (type) {
+                      1 -> { top = 0xFFF7E7A0.toInt(); mid = 0xFFD4A82E.toInt(); bot = 0xFF8A6414.toInt(); txt = 0xFF3B2A06.toInt() }
+                      2 -> { top = 0xFF8E5CFF.toInt(); mid = 0xFF3A1E9E.toInt(); bot = 0xFF12082E.toInt(); txt = 0xFFFFFFFF.toInt() }
+                      3 -> { top = 0xFF7FD6FF.toInt(); mid = 0xFF1E6FD9.toInt(); bot = 0xFF082A66.toInt(); txt = 0xFFFFFFFF.toInt() }
+                      else -> { top = 0xFF6B6B6B.toInt(); mid = 0xFF222222.toInt(); bot = 0xFF000000.toInt(); txt = 0xFFFFD60A.toInt() }
+                  }
+
+                  val shape = Path().apply {
+                      moveTo(0.16f * w, 0.02f * h)
+                      lineTo(0.84f * w, 0.02f * h)
+                      lineTo(0.97f * w, 0.09f * h)
+                      lineTo(0.97f * w, 0.90f * h)
+                      lineTo(0.5f * w, 0.985f * h)
+                      lineTo(0.03f * w, 0.90f * h)
+                      lineTo(0.03f * w, 0.09f * h)
+                      close()
+                  }
+                  val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+                  fill.shader = LinearGradient(
+                      0f, 0f, 0f, h, intArrayOf(top, mid, bot),
+                      floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP
+                  )
+                  fill.pathEffect = CornerPathEffect(36f)
+                  cv.drawPath(shape, fill)
+
+                  cv.save()
+                  cv.clipPath(shape)
+
+                  val streak = Paint()
+                  streak.color = 0x22FFFFFF
+                  for (i in 0..5) {
+                      val x = i * 0.22f * w - 0.2f * w
+                      val sp = Path()
+                      sp.moveTo(x, 0f)
+                      sp.lineTo(x + 0.10f * w, 0f)
+                      sp.lineTo(x + 0.45f * w, h)
+                      sp.lineTo(x + 0.35f * w, h)
+                      sp.close()
+                      cv.drawPath(sp, streak)
+                  }
+
+                  val dest = RectF(0.05f * w, 0.04f * h, 0.95f * w, 0.74f * h)
+                  val sw = player.width.toFloat()
+                  val sh = player.height.toFloat()
+                  val sc = if (fit) Math.min(dest.width() / sw, dest.height() / sh)
+                  else Math.max(dest.width() / sw, dest.height() / sh)
+                  val dx = dest.left + (dest.width() - sw * sc) / 2f
+                  val dy = if (fit) dest.bottom - sh * sc else dest.top + (dest.height() - sh * sc) / 2f
+                  val m = Matrix()
+                  m.setScale(sc, sc)
+                  m.postTranslate(dx, dy)
+                  cv.save()
+                  cv.clipRect(dest)
+                  cv.drawBitmap(player, m, Paint(Paint.FILTER_BITMAP_FLAG))
+                  cv.restore()
+
+                  if (!fit) {
+                      val fade = Paint()
+                      fade.shader = LinearGradient(
+                          0f, 0.58f * h, 0f, 0.745f * h,
+                          mid and 0x00FFFFFF, mid, Shader.TileMode.CLAMP
+                      )
+                      cv.drawRect(0f, 0.58f * h, w, 0.75f * h, fade)
+                  }
+
+                  val tp = Paint(Paint.ANTI_ALIAS_FLAG)
+                  tp.color = txt
+                  tp.typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
+                  tp.textAlign = Paint.Align.CENTER
+                  drawFit(cv, ovr.toString(), 0.17f * w, 0.20f * h, 0.095f * h, 0.2f * w, tp)
+                  drawFit(cv, pos, 0.17f * w, 0.245f * h, 0.04f * h, 0.2f * w, tp)
+                  drawFit(cv, country, 0.17f * w, 0.285f * h, 0.028f * h, 0.2f * w, tp)
+                  drawFit(cv, name.uppercase(), 0.5f * w, 0.80f * h, 0.075f * h, 0.82f * w, tp)
+
+                  val line = Paint()
+                  line.color = (txt and 0x00FFFFFF) or 0x88000000.toInt()
+                  cv.drawRect(0.15f * w, 0.822f * h, 0.85f * w, 0.826f * h, line)
+
+                  val labels = listOf("HIZ", "ŞUT", "PAS", "DRİ", "DEF", "FİZ")
+                  val offs = listOf(0, -2, -4, 0, -25, -10)
+                  val rnd = kotlin.random.Random(name.hashCode() + ovr)
+                  val colW = 0.7f * w / 6f
+                  for (i in 0 until 6) {
+                      val v = (ovr + offs[i] + rnd.nextInt(-3, 4)).coerceIn(30, 99)
+                      val cx = 0.15f * w + (i + 0.5f) * colW
+                      drawFit(cv, v.toString(), cx, 0.885f * h, 0.04f * h, colW * 0.9f, tp)
+                      drawFit(cv, labels[i], cx, 0.915f * h, 0.022f * h, colW * 0.9f, tp)
+                  }
+                  cv.restore()
+
+                  val st = Paint(Paint.ANTI_ALIAS_FLAG)
+                  st.style = Paint.Style.STROKE
+                  st.strokeWidth = 12f
+                  st.color = 0x99FFFFFF.toInt()
+                  st.pathEffect = CornerPathEffect(36f)
+                  cv.drawPath(shape, st)
+                  return out
+              }
+
+              private fun save(share: Boolean) {
+                  val b = shown
+                  if (b == null) {
+                      toast("Önce bir resim üret")
+                      return
+                  }
+                  val png = lastCard || lastFit
+                  Thread {
+                      try {
+                          val cv = ContentValues().apply {
+                              put(MediaStore.MediaColumns.DISPLAY_NAME, "RS_" + System.currentTimeMillis())
+                              put(MediaStore.MediaColumns.MIME_TYPE, if (png) "image/png" else "image/jpeg")
+                              put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/ResimStudyo")
+                          }
+                          val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)
+                              ?: throw Exception("Galeri açılamadı")
+                          contentResolver.openOutputStream(uri)?.use {
+                              b.compress(if (png) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG, 95, it)
+                          }
+                          runOnUiThread {
+                              toast("Galeriye kaydedildi")
+                              if (share) {
+                                  val i = Intent(Intent.ACTION_SEND)
+                                  i.type = if (png) "image/png" else "image/jpeg"
+                                  i.putExtra(Intent.EXTRA_STREAM, uri)
+                                  i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                  startActivity(Intent.createChooser(i, "Paylaş"))
+                              }
+                          }
+                      } catch (e: Exception) {
+                          runOnUiThread { toast("Kaydedilemedi: " + e.message) }
+                      }
+                  }.start()
+              }
+          }
+          EOF
+      - name: Derle
+        run: gradle assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: studyo-apk
+          path: app/build/outputs/apk/debug/*.apk
